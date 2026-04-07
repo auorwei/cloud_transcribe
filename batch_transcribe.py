@@ -71,7 +71,7 @@ def transcribe_file(model: WhisperModel, audio_path: Path, srt_path: Path) -> bo
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    all_audio = sorted(AUDIO_DIR.glob("*.wav"))
+    all_audio = sorted(AUDIO_DIR.glob("*.mp3"))
     done_stems = {f.stem for f in OUTPUT_DIR.glob("*.srt")}
     todo = [f for f in all_audio if f.stem not in done_stems]
 

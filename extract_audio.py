@@ -10,6 +10,7 @@ from pathlib import Path
 ORIGIN_DIR = Path(r"D:\projects\whisper\origin")
 SUBTITLE_DIR = Path(r"D:\projects\whisper\subtitle")
 AUDIO_DIR = Path(__file__).parent / "audio"
+AUDIO_EXT = ".mp3"
 FFMPEG_EXE = r"D:\projects\whisper\Faster-Whisper-XXL\ffmpeg.exe"
 
 VIDEO_EXTS = {".wmv", ".avi", ".mp4", ".mkv", ".mov", ".flv", ".webm"}
@@ -23,7 +24,7 @@ def main() -> None:
         if f.suffix.lower() in VIDEO_EXTS and not f.stem.endswith("_sub")
     )
     done_stems = {f.stem for f in SUBTITLE_DIR.glob("*.srt")}
-    audio_stems = {f.stem for f in AUDIO_DIR.glob("*.wav")}
+    audio_stems = {f.stem for f in AUDIO_DIR.glob(f"*{AUDIO_EXT}")}
     todo = [
         f for f in all_videos
         if f.stem not in done_stems and f.stem not in audio_stems
@@ -37,18 +38,19 @@ def main() -> None:
         return
 
     for i, video in enumerate(todo, 1):
-        out_wav = AUDIO_DIR / f"{video.stem}.wav"
-        print(f"[{i}/{len(todo)}] {video.name} -> {out_wav.name}")
+        out_file = AUDIO_DIR / f"{video.stem}{AUDIO_EXT}"
+        print(f"[{i}/{len(todo)}] {video.name} -> {out_file.name}")
 
         cmd = [
             FFMPEG_EXE,
             "-i", str(video),
             "-vn",                  # 不要视频
-            "-acodec", "pcm_s16le", # 16-bit PCM
+            "-acodec", "libmp3lame",# MP3 编码
             "-ar", "16000",         # 16kHz
             "-ac", "1",             # 单声道
+            "-b:a", "64k",          # 64kbps 码率（语音足够）
             "-y",                   # 覆盖
-            str(out_wav),
+            str(out_file),
         ]
 
         result = subprocess.run(
@@ -56,10 +58,10 @@ def main() -> None:
             text=True, encoding="utf-8", errors="replace",
         )
 
-        if result.returncode != 0 or not out_wav.exists():
+        if result.returncode != 0 or not out_file.exists():
             print(f"  失败: {result.stderr[-200:]}")
         else:
-            size_mb = out_wav.stat().st_size / 1024 / 1024
+            size_mb = out_file.stat().st_size / 1024 / 1024
             print(f"  完成 ({size_mb:.1f} MB)")
 
     print(f"\n音频文件已保存到: {AUDIO_DIR}")
