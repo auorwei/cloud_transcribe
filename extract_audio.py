@@ -10,7 +10,7 @@ from pathlib import Path
 ORIGIN_DIR = Path(r"D:\projects\whisper\origin")
 SUBTITLE_DIR = Path(r"D:\projects\whisper\subtitle")
 AUDIO_DIR = Path(__file__).parent / "audio"
-AUDIO_EXT = ".mp3"
+AUDIO_EXT = ".wav"
 FFMPEG_EXE = r"D:\projects\whisper\Faster-Whisper-XXL\ffmpeg.exe"
 
 VIDEO_EXTS = {".wmv", ".avi", ".mp4", ".mkv", ".mov", ".flv", ".webm"}
@@ -45,10 +45,9 @@ def main() -> None:
             FFMPEG_EXE,
             "-i", str(video),
             "-vn",                  # 不要视频
-            "-acodec", "libmp3lame",# MP3 编码
+            "-acodec", "pcm_s16le", # 16-bit PCM
             "-ar", "16000",         # 16kHz
             "-ac", "1",             # 单声道
-            "-b:a", "64k",          # 64kbps 码率（语音足够）
             "-y",                   # 覆盖
             str(out_file),
         ]

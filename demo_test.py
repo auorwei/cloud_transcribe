@@ -49,7 +49,7 @@ print("\n4. 测试转写")
 from pathlib import Path
 
 audio_dir = Path(__file__).parent / "audio"
-wav_files = sorted(audio_dir.glob("*.mp3"))
+wav_files = sorted(audio_dir.glob("*.wav"))
 
 if wav_files:
     test_file = wav_files[0]
