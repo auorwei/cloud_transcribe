@@ -1,0 +1,4 @@
+audio/
+subtitle/
+__pycache__/
+*.pyc
