@@ -5,7 +5,9 @@
 
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 
 try:
     from faster_whisper import WhisperModel
@@ -20,7 +22,10 @@ MODEL_SIZE = "large-v3"
 DEVICE = "cuda"
 COMPUTE_TYPE = "float16"  # GPU 用 float16，CPU 用 int8
 LANGUAGE = "ja"
+NUM_WORKERS = 4  # 并行转写数量，RTX 4090 24GB 可跑 4-5 个
 # ==============================
+
+print_lock = Lock()
 
 
 def format_ts(seconds: float) -> str:
@@ -36,6 +41,11 @@ def format_time(seconds: float) -> str:
     m, s = divmod(int(seconds), 60)
     h, m = divmod(m, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def safe_print(*args, **kwargs) -> None:
+    with print_lock:
+        print(*args, **kwargs)
 
 
 def transcribe_file(model: WhisperModel, audio_path: Path, srt_path: Path) -> bool:
@@ -55,14 +65,14 @@ def transcribe_file(model: WhisperModel, audio_path: Path, srt_path: Path) -> bo
             lines.append("")
 
         if not lines:
-            print("  警告: 未识别到任何语音")
+            safe_print("  警告: 未识别到任何语音")
             return False
 
         srt_path.write_text("\n".join(lines), encoding="utf-8")
         return True
 
     except Exception as e:
-        print(f"  异常: {e}")
+        safe_print(f"  异常: {e}")
         if srt_path.exists():
             srt_path.unlink()
         return False
@@ -81,30 +91,50 @@ def main() -> None:
         print("全部完成!")
         return
 
-    print(f"模型: {MODEL_SIZE}  设备: {DEVICE}  计算精度: {COMPUTE_TYPE}")
-    print("正在加载模型...")
+    workers = min(NUM_WORKERS, len(todo))
+    print(f"模型: {MODEL_SIZE}  设备: {DEVICE}  计算精度: {COMPUTE_TYPE}  并行数: {workers}")
+    print(f"正在加载 {workers} 个模型实例...")
     t0 = time.time()
-    model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
-    print(f"模型加载完成，耗时 {format_time(time.time() - t0)}")
+    models = []
+    for i in range(workers):
+        models.append(WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE))
+        print(f"  模型 {i + 1}/{workers} 已加载")
+    print(f"全部模型加载完成，耗时 {format_time(time.time() - t0)}")
     print("=" * 50)
 
     success_count = 0
     fail_list = []
+    counter_lock = Lock()
+    completed = [0]  # 用列表以便在闭包中修改
+
+    def worker(task: tuple[int, Path, WhisperModel]) -> tuple[str, bool, float]:
+        idx, audio, model = task
+        srt_path = OUTPUT_DIR / f"{audio.stem}.srt"
+        safe_print(f"\n[开始] {audio.name}")
+        start = time.time()
+        ok = transcribe_file(model, audio, srt_path)
+        elapsed = time.time() - start
+        with counter_lock:
+            completed[0] += 1
+            safe_print(
+                f"  [{'完成' if ok else '失败'}] {audio.name}  "
+                f"耗时 {format_time(elapsed)}  "
+                f"进度 {completed[0]}/{len(todo)}"
+            )
+        return audio.name, ok, elapsed
+
+    # 为每个任务分配模型实例（轮询分配）
+    tasks = [(i, audio, models[i % workers]) for i, audio in enumerate(todo)]
 
     try:
-        for i, audio in enumerate(todo, 1):
-            srt_path = OUTPUT_DIR / f"{audio.stem}.srt"
-            print(f"\n[{i}/{len(todo)}] {audio.name}")
-
-            start = time.time()
-            ok = transcribe_file(model, audio, srt_path)
-            elapsed = time.time() - start
-
-            if ok:
-                success_count += 1
-                print(f"  完成，耗时 {format_time(elapsed)}")
-            else:
-                fail_list.append(audio.name)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(worker, t): t for t in tasks}
+            for future in as_completed(futures):
+                name, ok, _ = future.result()
+                if ok:
+                    success_count += 1
+                else:
+                    fail_list.append(name)
 
     except KeyboardInterrupt:
         print("\n\n用户中断，已安全停止。")
