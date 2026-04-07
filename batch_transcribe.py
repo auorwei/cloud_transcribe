@@ -22,7 +22,7 @@ MODEL_SIZE = "large-v3"
 DEVICE = "cuda"
 COMPUTE_TYPE = "float16"  # GPU 用 float16，CPU 用 int8
 LANGUAGE = "ja"
-NUM_WORKERS = 4  # 并行转写数量，RTX 4090 24GB 可跑 4-5 个
+NUM_WORKERS = 2  # 单GPU建议2个，交替利用GPU/CPU减少空闲
 # ==============================
 
 print_lock = Lock()
@@ -45,7 +45,7 @@ def format_time(seconds: float) -> str:
 
 def safe_print(*args, **kwargs) -> None:
     with print_lock:
-        print(*args, **kwargs)
+        print(*args, flush=True, **kwargs)
 
 
 def transcribe_file(model: WhisperModel, audio_path: Path, srt_path: Path) -> bool:
@@ -85,27 +85,29 @@ def main() -> None:
     done_stems = {f.stem for f in OUTPUT_DIR.glob("*.srt")}
     todo = [f for f in all_audio if f.stem not in done_stems]
 
-    print(f"音频总数: {len(all_audio)}  已完成: {len(done_stems)}  待处理: {len(todo)}")
+    print(f"音频总数: {len(all_audio)}  已完成: {len(done_stems)}  待处理: {len(todo)}", flush=True)
 
     if not todo:
         print("全部完成!")
         return
 
     workers = min(NUM_WORKERS, len(todo))
-    print(f"模型: {MODEL_SIZE}  设备: {DEVICE}  计算精度: {COMPUTE_TYPE}  并行数: {workers}")
-    print(f"正在加载 {workers} 个模型实例...")
+    print(f"模型: {MODEL_SIZE}  设备: {DEVICE}  计算精度: {COMPUTE_TYPE}  并行数: {workers}", flush=True)
+    print(f"正在加载 {workers} 个模型实例...", flush=True)
     t0 = time.time()
     models = []
     for i in range(workers):
         models.append(WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE))
-        print(f"  模型 {i + 1}/{workers} 已加载")
-    print(f"全部模型加载完成，耗时 {format_time(time.time() - t0)}")
-    print("=" * 50)
+        print(f"  模型 {i + 1}/{workers} 已加载", flush=True)
+    print(f"全部模型加载完成，耗时 {format_time(time.time() - t0)}", flush=True)
+    print("=" * 50, flush=True)
 
     success_count = 0
     fail_list = []
     counter_lock = Lock()
-    completed = [0]  # 用列表以便在闭包中修改
+    completed = [0]
+    total_elapsed = [0.0]  # 累计已完成任务的耗时（用于估算）
+    batch_start = time.time()
 
     def worker(task: tuple[int, Path, WhisperModel]) -> tuple[str, bool, float]:
         idx, audio, model = task
@@ -116,10 +118,18 @@ def main() -> None:
         elapsed = time.time() - start
         with counter_lock:
             completed[0] += 1
+            total_elapsed[0] += elapsed
+            done = completed[0]
+            remaining = len(todo) - done
+            # 用实际墙钟时间估算剩余
+            wall_elapsed = time.time() - batch_start
+            avg_wall = wall_elapsed / done
+            eta = avg_wall * remaining
             safe_print(
                 f"  [{'完成' if ok else '失败'}] {audio.name}  "
                 f"耗时 {format_time(elapsed)}  "
-                f"进度 {completed[0]}/{len(todo)}"
+                f"进度 {done}/{len(todo)}  "
+                f"预计剩余 {format_time(eta)}"
             )
         return audio.name, ok, elapsed
 
